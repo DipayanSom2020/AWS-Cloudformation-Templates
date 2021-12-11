@@ -1,0 +1,365 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: IAM Role and Policy reqiuired  by Glue services for a Data Pipeline
+terminologies used - ETL - used for Transformation scripts EDL= data layer
+
+Parameters:
+  ETLS3BucketName:
+    Description: "Name of the etl S3 bucket"
+    Type: String
+
+  EnvType:
+    Description: "Environment type"
+    Default: dev
+    Type: String
+    AllowedValues: [dev, test,  prod]
+    ConstraintDescription: must specify prod, dev, test.
+
+  EDLRoleForETLAccess:
+    Description: "EDL Role for ETL Access"
+    Type: String
+
+Mappings:
+  AccountNoMap:
+    EDLAccNo:
+      dev: 1234
+      test: 5678
+      prod: 9801
+
+Resources:
+  GlueETLRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      Description: Allows Glue to call AWS services on your behalf.
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: glue.amazonaws.com
+            Action: sts:AssumeRole
+          - Effect: Allow
+            Principal:
+              Service: redshift.amazonaws.com
+            Action: sts:AssumeRole
+          - Effect: Allow
+            Principal:
+              AWS:
+                - !Join
+                  - ''
+                  - - 'arn:aws:iam::'
+                    - !FindInMap [AccountNoMap, EDLAccNo, !Ref EnvType]
+                    - ':role/'
+                    - !Ref EDLRoleForETLAccess
+            Action: sts:AssumeRole
+
+      RoleName: !Sub 'sample-${EnvType}-glue-role'
+      PermissionsBoundary: !Sub 'arn:aws:iam::${AWS::AccountId}:policy/lz/power-user'
+
+
+  GlueCloudWatchPolicy:
+    Type: 'AWS::IAM::ManagedPolicy'
+    Properties:
+      Description: This Policy is used to access cloudwatch service for 
+      ManagedPolicyName: !Sub 'sample-${EnvType}-glue-cloudwatch-logs-policy'
+      Roles:
+        - Ref: GlueETLRole
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: VisualEditor0
+            Effect: Allow
+            Action:
+              - 'logs:CreateLogStream'
+              - 'logs:CreateLogGroup'
+              - 'logs:GetLogRecord'
+              - 'logs:DescribeLogGroups'
+              - 'logs:DescribeLogStreams'
+              - 'logs:GetLogEvents'
+              - 'logs:GetLogGroupFields'
+              - 'logs:PutRetentionPolicy'
+              - 'logs:CreateLogGroup'
+              - 'logs:PutLogEvents'
+            Resource: !Sub 'arn:aws:logs:us-east-1:${AWS::AccountId}:log-group:/aws-glue/*:log-stream:*'
+          - Sid: VisualEditor1
+            Effect: Allow
+            Action:
+              - 'cloudwatch:ListMetrics'
+              - 'cloudwatch:PutMetricData'
+            Resource: !Sub 'arn:aws:cloudwatch:us-east-1:${AWS::AccountId}:*'
+
+  GlueSecretsmanagerPolicy:
+    Type: 'AWS::IAM::ManagedPolicy'
+    Properties:
+      Description: This Policy is used to access secretsmanager service
+      ManagedPolicyName: !Sub 'sample-${EnvType}-glue-secretsmanager-policy'
+      Roles:
+        - Ref: GlueETLRole
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: VisualEditor0
+            Effect: Allow
+            Action:
+              - 'secretsmanager:GetSecretValue'
+            Resource:
+              - !Sub 'arn:aws:secretsmanager:us-east-1:${AWS::AccountId}:secret:sample-${EnvType}-abc*'
+              - !Sub 'arn:aws:secretsmanager:us-east-1:${AWS::AccountId}:secret:sample-*-xyz*'
+              - !Sub 'arn:aws:secretsmanager:us-east-1:${AWS::AccountId}:secret:sample-*-def*'
+
+
+  GlueDynamoDBPolicy:
+    Type: 'AWS::IAM::ManagedPolicy'
+    Properties:
+      Description: This Policy allows access to DynamoDB sample tables
+      ManagedPolicyName: !Sub 'sample-${EnvType}-glue-dynamodb-read-write-policy'
+      Roles:
+        - Ref: GlueETLRole
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: VisualEditor1
+            Effect: Allow
+            Action:
+              - 'dynamodb:PutItem'
+              - 'dynamodb:GetItem'
+              - 'dynamodb:Query'
+              - 'dynamodb:UpdateItem'
+              - 'dynamodb:BatchWriteItem'
+            Resource:
+              - !Sub 'arn:aws:dynamodb:us-east-1:${AWS::AccountId}:table/sample-*'
+          - Sid: "AllowDynamoDBAccess2"
+            Effect: Allow
+            Action:
+                - 'dynamodb:GetItem'
+                - 'dynamodb:Query'
+            Resource:
+                - !Sub 'arn:aws:dynamodb:us-east-1:${AWS::AccountId}:table/sample-env-config'
+          - Sid: VisualEditor2
+            Effect: Allow
+            Action: dynamodb:ListTables
+            Resource: !Sub 'arn:aws:dynamodb:us-east-1:${AWS::AccountId}:*'
+
+  GlueS3KMSPolicy:
+      Type: 'AWS::IAM::ManagedPolicy'
+      Properties:
+        Description: This Policy allows access to etl s3 bucket and kms access for necessary keys
+        ManagedPolicyName: !Sub 'sample-${EnvType}-glue-s3-read-write-policy'
+        Roles:
+          - Ref: GlueETLRole
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Sid: AllowScriptsBucketListing
+              Effect: Allow
+              Action:
+                - 's3:ListBucket'
+              Resource:
+                - !Sub 'arn:aws:s3:::${ETLS3BucketName}/*'
+                - !Sub 'arn:aws:s3:::${ETLS3BucketName}'
+                - !Sub 'arn:aws:s3:::sample-us-east-1-${EnvType}-temp'
+                - !Sub 'arn:aws:s3:::sample-us-east-1-${EnvType}-temp/*'
+            - Sid: AllowScriptsS3Write
+              Effect: Allow
+              Action:
+                - 's3:GetObject'
+                - 's3:PutObject'
+                - 's3:DeleteObject'
+                - 's3:GetBucketLocation'
+                - 's3:ListBucket'
+                - 's3:ListAllMyBuckets'
+                - 's3:GetBucketAcl'
+              Resource:
+                - !Sub 'arn:aws:s3:::${ETLS3BucketName}/*'
+                - !Sub 'arn:aws:s3:::sample-us-east-1-${EnvType}-temp/*'
+            - Action:
+                - 'kms:DescribeKey'
+                - 'kms:GenerateDataKey'
+                - 'kms:Decrypt'
+                - 'kms:Encrypt'
+              Resource:
+                - !Join
+                  - ''
+                  - - !Sub 'arn:aws:kms:us-east-1:${AWS::AccountId}:key/'
+                    - Fn::ImportValue:
+                        !Sub "sample-${EnvType}-kms-s3-scripts-id"
+                - !Join
+                  - ''
+                  - - !Sub 'arn:aws:kms:us-east-1:${AWS::AccountId}:key/'
+                    - Fn::ImportValue:
+                        !Sub "sample-${EnvType}-kms-s3-temp-id"
+
+                - !Join
+                  - ''
+                  - - !Sub 'arn:aws:kms:us-east-1:${AWS::AccountId}:key/'
+                    - Fn::ImportValue:
+                        !Sub "sample-${EnvType}-kms-dynamodb-id"
+                - !Join
+                  - ''
+                  - - !Sub 'arn:aws:kms:us-east-1:${AWS::AccountId}:key/'
+                    - Fn::ImportValue:
+                        !Sub "sample-${EnvType}-kms-sns-id"
+                - !Join
+                  - ''
+                  - - !Sub 'arn:aws:kms:us-east-1:${AWS::AccountId}:key/'
+                    - Fn::ImportValue:
+                        !Sub "sample-${EnvType}-kms-edw-secret-id"
+              Effect: Allow
+              Sid: KMSPerms
+
+  ETLGluePolicy:
+    Type: 'AWS::IAM::ManagedPolicy'
+    Properties:
+      Description: This Policy allows access Glue Services for 
+      ManagedPolicyName: !Sub 'sample-${EnvType}-glue-service-policy'
+      Roles:
+        - Ref: GlueETLRole
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: VisualEditor0
+            Effect: Allow
+            Action:
+              - 'ec2:DeleteTags'
+              - 'ec2:CreateTags'
+            Resource:
+              - 'arn:aws:ec2:*:*:instance/*'
+              - 'arn:aws:ec2:*:*:security-group/*'
+              - 'arn:aws:ec2:*:*:network-interface/*'
+            Condition:
+              ForAllValues:StringEquals:
+                aws:TagKeys: 'aws-glue-service-resource'
+          - Sid: VisualEditor1
+            Effect: Allow
+            Action:
+              - glue:GetConnections
+              - glue:CreateSecurityConfiguration
+              - glue:GetDataCatalogEncryptionSettings
+              - glue:PutWorkflowRunProperties
+              - glue:GetWorkflowRunProperties
+              - glue:GetSecurityConfiguration
+              - glue:GetCatalogImportStatus
+              - glue:CreateJob
+              - glue:ImportCatalogToGlue
+              - glue:UpdateWorkflow
+              - glue:CreateScript
+              - glue:GetConnection
+              - glue:PutDataCatalogEncryptionSettings
+              - glue:GetJobRun
+              - glue:UpdateJob
+              - glue:ListWorkflows
+              - glue:GetJobs
+              - glue:GetWorkflowRun
+              - glue:BatchStopJobRun
+              - glue:GetSecurityConfigurations
+              - glue:CreateConnection
+              - glue:ListJobs
+              - glue:UpdateConnection
+              - glue:BatchDeleteConnection
+              - glue:BatchGetJobs
+              - glue:StartJobRun
+              - glue:GetWorkflowRuns
+              - glue:GetJob
+              - glue:GetWorkflow
+              - glue:GetJobRuns
+            Resource: !Sub 'arn:aws:glue:us-east-1:${AWS::AccountId}:job/sample-${EnvType}-*'
+          - Sid: VisualEditor2
+            Effect: Allow
+            Action:
+              - s3:GetObject
+              - s3:ListBucket
+              - s3:GetBucketAcl
+              - s3:ListAllMyBuckets
+              - s3:GetBucketLocation
+              - s3:PutObject
+            Resource:
+              - !Sub 'arn:aws:s3:::${ETLS3BucketName}/*'
+              - !Sub 'arn:aws:s3:::${ETLS3BucketName}'
+          - Sid: VisualEditor3
+            Effect: Allow
+            Action:
+              - glue:GetConnections
+              - glue:CreateSecurityConfiguration
+              - glue:GetDataCatalogEncryptionSettings
+              - glue:PutWorkflowRunProperties
+              - glue:GetWorkflowRunProperties
+              - glue:GetSecurityConfiguration
+              - glue:GetCatalogImportStatus
+              - glue:CreateJob
+              - glue:ImportCatalogToGlue
+              - glue:UpdateWorkflow
+              - glue:CreateScript
+              - glue:GetConnection
+              - glue:PutDataCatalogEncryptionSettings
+              - glue:GetJobRun
+              - glue:UpdateJob
+              - glue:ListWorkflows
+              - glue:GetJobs
+              - glue:GetWorkflowRun
+              - glue:BatchStopJobRun
+              - glue:GetSecurityConfigurations
+              - glue:CreateConnection
+              - glue:ListJobs
+              - glue:UpdateConnection
+              - glue:BatchDeleteConnection
+              - glue:BatchGetJobs
+              - glue:StartJobRun
+              - glue:GetWorkflowRuns
+              - glue:GetJob
+              - glue:GetWorkflow
+              - glue:GetJobRuns
+            Resource:
+              - !Sub 'arn:aws:glue:us-east-1:${AWS::AccountId}:job/sample-${EnvType}-*'
+          - Sid: GlueGetCon
+            Effect: Allow
+            Action:
+              - glue:GetConnection
+            Resource:
+              - !Sub 'arn:aws:glue:us-east-1:${AWS::AccountId}:*'
+          - Sid: VisualEditor4
+            Effect: Allow
+            Action:
+              - ec2:DescribeVpcAttribute
+              - ec2:DescribeNetworkInterfaces
+              - ec2:DescribeRouteTables
+              - ec2:DescribeSecurityGroups
+              - ec2:CreateNetworkInterface
+              - ec2:DescribeVpcEndpoints
+              - ec2:DescribeSubnets
+              - ec2:Deletenetworkinterface
+            Resource: "*"
+
+
+  GlueSNSStepfnPolicy:
+      Type: 'AWS::IAM::ManagedPolicy'
+      Properties:
+        Description: This Policy allows access to sns and stepfunction for sample
+        ManagedPolicyName: !Sub 'sample-${EnvType}-glue-sns-stepfn-access-policy'
+        Roles:
+          - Ref: GlueETLRole
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Sid: "SNSAccessPublish"
+              Effect: Allow
+              Action:
+                - sns:Publish
+              Resource:
+                - !Sub 'arn:aws:sns:us-east-1:${AWS::AccountId}:sample-${EnvType}-*'
+
+            - Sid: "ExecuteMasterStepFunctionAccess"
+              Effect: Allow
+              Action:
+                - 'states:DescribeStateMachineForExecution'
+                - 'states:DescribeActivity'
+                - 'states:DescribeStateMachine'
+                - 'states:DescribeExecution'
+                - 'states:ListExecutions'
+                - 'states:GetExecutionHistory'
+                - 'states:StartExecution'
+                - 'states:ListStateMachines'
+                - 'states:ListActivities'
+                - 'states:StopExecution'
+              Resource:
+                - !Sub 'arn:aws:states:us-east-1:${AWS::AccountId}:execution:sample-${EnvType}-*:*'
+                - !Sub 'arn:aws:states:us-east-1:${AWS::AccountId}:activity:sample-${EnvType}-*'
+                - !Sub 'arn:aws:states:us-east-1:${AWS::AccountId}:stateMachine:sample-${EnvType}-*'
