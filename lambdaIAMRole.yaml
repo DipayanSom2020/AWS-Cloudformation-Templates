@@ -1,0 +1,106 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: IAM Role and Policy needed for a lamda job that can be used for 
+ putting metrics on cloudwatch 
+ read/write/update item in dynamodb
+ use kms 
+ use stepfunction
+
+
+Parameters:
+  EnvType:
+    Description: "Environment type"
+    Default: dev
+    Type: String
+    AllowedValues: [dev, test, prod]
+    ConstraintDescription: must specify prod, dev, or test.
+
+
+Resources:
+  LambdaTriggRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: 'lambda.amazonaws.com'
+            Action: 'sts:AssumeRole'
+      RoleName: !Sub 'sample-${EnvType}-sample-lambda-role'
+      PermissionsBoundary: !Sub 'arn:aws:iam::${AWS::AccountId}:policy/lz/power-user'
+
+  LambdaTriggPolicy:
+    Type: 'AWS::IAM::ManagedPolicy'
+    Properties:
+      Description: This Policy is used to access services needed by Lambda
+      ManagedPolicyName: !Sub 'sample-${EnvType}-sample-lambda-policy'
+      Roles:
+        - Ref: LambdaTriggRole
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AllowCloudWatchLogAccess
+            Effect: Allow
+            Action:
+              - 'logs:CreateLogGroup'
+              - 'logs:CreateLogStream'
+              - 'logs:GetLogRecord'
+              - 'logs:DescribeLogGroups'
+              - 'logs:DescribeLogStreams'
+              - 'logs:GetLogEvents'
+              - 'logs:GetLogGroupFields'
+              - 'logs:PutRetentionPolicy'
+              - 'logs:PutLogEvents'
+            Resource:
+              - !Sub 'arn:aws:logs:us-east-1:${AWS::AccountId}:log-group:/aws/lambda/sample-${EnvType}-*:log-stream:*'
+
+          - Sid: "AllowDynamoDBAccess"
+            Effect: Allow
+            Action:
+                - 'dynamodb:PutItem'
+                - 'dynamodb:GetItem'
+                - 'dynamodb:Query'
+                - 'dynamodb:UpdateItem'
+            Resource:
+                - !Sub 'arn:aws:dynamodb:us-east-1:${AWS::AccountId}:table/sample*'
+
+          - Sid: "AllowDynamoDBAccess2"
+            Effect: Allow
+            Action:
+                - 'dynamodb:GetItem'
+                - 'dynamodb:Query'
+            Resource:
+                - !Sub 'arn:aws:dynamodb:us-east-1:${AWS::AccountId}:table/sample-env-config'
+
+
+          - Sid: "AllowKMSAccess"
+            Effect: Allow
+            Action:
+                - 'kms:DescribeKey'
+                - 'kms:GenerateDataKey'
+                - 'kms:Decrypt'
+                - 'kms:Encrypt'
+            Resource:
+              - !Join
+                - ''
+                - - !Sub 'arn:aws:kms:us-east-1:${AWS::AccountId}:key/'
+                  - Fn::ImportValue:
+                      !Sub "sample-${EnvType}-kms-dynamodb-id"
+
+          - Sid: "ExecuteMasterStepFunctionAccess"
+            Effect: Allow
+            Action:
+                - 'states:DescribeStateMachineForExecution'
+                - 'states:DescribeActivity'
+                - 'states:DescribeStateMachine'
+                - 'states:DescribeExecution'
+                - 'states:ListExecutions'
+                - 'states:GetExecutionHistory'
+                - 'states:StartExecution'
+                - 'states:ListStateMachines'
+                - 'states:ListActivities'
+                - 'states:StopExecution'
+            Resource:
+              - !Sub 'arn:aws:states:us-east-1:${AWS::AccountId}:execution:sample-${EnvType}-*:*'
+              - !Sub 'arn:aws:states:us-east-1:${AWS::AccountId}:activity:sample-${EnvType}-*'
+              - !Sub 'arn:aws:states:us-east-1:${AWS::AccountId}:stateMachine:sample-${EnvType}-*'
